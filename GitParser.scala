@@ -7,49 +7,8 @@ import scala.collection.immutable.PagedSeq
 import java.io.InputStreamReader
 
 import scala.util.matching.Regex;
-  
-class CharSequenceWithOffset private[CharSequenceWithOffset] (val underlying: CharSequence, val offset: Int) extends CharSequence {  
-  
-  def charAt(index: Int): Char = underlying.charAt(offset + index)   
-  
-  def length: Int = underlying.length - offset  
-  
-  def subSequence(start: Int, end: Int): CharSequence = 
-    underlying.subSequence(offset + start, offset + end)  
-  
-  override def toString: String = 
-    underlying.subSequence(offset, underlying.length).toString 
 
-  }
-
-object CharSequenceWithOffset {  
-  def apply(underlying: CharSequence, offset: Int) = underlying match {
-    case orig : CharSequenceWithOffset => 
-      new CharSequenceWithOffset(orig.underlying, offset + orig.offset)    
-    case _ => new CharSequenceWithOffset(underlying, offset)  
-  }
-} 
- 
 object GitParser extends RegexParsers with App {
-
-  /** A parser that matches a regex string */
-  override implicit def regex(r: Regex): Parser[String] = new Parser[String] {
-    def apply(in: Input) = {
-      println("***HERE")
-      val source = in.source
-      val offset = in.offset
-      val start = handleWhiteSpace(source, offset)
-      val cso = CharSequenceWithOffset(source, offset)
-      (r.findPrefixMatchOf(cso)) match {
-	case Some(matched) =>
-	  Success(source.subSequence(start, start + matched.end).toString, 
-	          in.drop(start + matched.end - offset))
-	case None =>
-	  val found = if (start == source.length()) "end of source" else "`"+source.charAt(start)+"'" 
-	Failure("string matching regex `"+r+"' expected but "+found+" found", in.drop(start - offset))
-      }
-    }
-  }
   
   override val whiteSpace = "^#.*$".r
   
