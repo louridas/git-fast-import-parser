@@ -8,29 +8,6 @@ import java.io.InputStreamReader
 
 import scala.util.matching.Regex;
   
-// case class CharSequenceTail(original: CharSequence, offset: Int) {
-  
-//   def charAt(i: Int): Char = original.charAt(i + offset)
-  
-//   def subSequence(start: Int, end: Int) = 
-//     original.subSequence(start + offset, end + offset)
-
-//   def length(): Int = original.length() - offset
-  
-//   def toString = 
-//     original.subSequence(offset, original.length()).toString
-// }
-
-// case object CharSequenceTail {   
-//   def tailFrom(original: CharSequence, offset: Int): CharSequence = 
-//     original match {    
-//       case cst : CharSequenceTail => CharSequenceTail(cst.original, 
-//                                                       cst.offset + offset)    
-//       case _ => CharSequenceTail(original, offset)   
-//     }
-// }
-
-  
 class CharSequenceWithOffset private[CharSequenceWithOffset] (val underlying: CharSequence, val offset: Int) extends CharSequence {  
   
   def charAt(index: Int): Char = underlying.charAt(offset + index)   
