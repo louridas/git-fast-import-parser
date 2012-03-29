@@ -35,6 +35,7 @@ object GitParser extends RegexParsers with App {
   /** A parser that matches a regex string */
   override implicit def regex(r: Regex): Parser[String] = new Parser[String] {
     def apply(in: Input) = {
+      println("***HERE")
       val source = in.source
       val offset = in.offset
       val start = handleWhiteSpace(source, offset)
@@ -52,19 +53,58 @@ object GitParser extends RegexParsers with App {
   
   override val whiteSpace = "^#.*$".r
   
-  override def handleWhiteSpace(source: java.lang.CharSequence, 
-                                offset: Int): Int = {
+  override def handleWhiteSpace(source: CharSequence, offset: Int): Int = {
     if (skipWhitespace) {
-      val cso = CharSequenceWithOffset(source, offset)
-      whiteSpace.findPrefixMatchOf(cso) match {
-        case Some(matched) => offset + matched.end
-        case None => offset
+      if ((offset > 0) && (source.charAt(offset - 1) != '\n')) {
+        offset
+      } else if (source.charAt(offset) == '#') {
+        var i = 1
+        try {
+          while (source.charAt(offset + i) != '\n') {
+            i += 1
+          }
+        } catch {
+          case ex: IndexOutOfBoundsException => i -= 1
+        }
+        offset + i
+      } else {
+        offset
       }
-    } else {
+    } else
       offset
-    }
   }
     
+  override implicit def literal(s: String): Parser[String] = 
+    new Parser[String] {
+      
+    def apply(in: Input) = {
+      val source = in.source
+      val offset = in.offset
+      val start = handleWhiteSpace(source, offset)
+      var i = 0
+      var j = start
+      var endOfSource = false
+      try {
+        while (i < s.length && s.charAt(i) == source.charAt(j)) {
+	  i += 1
+	  j += 1
+        }
+      } catch {
+        case ex: IndexOutOfBoundsException => endOfSource = true
+      }
+      if (i == s.length)
+	Success(source.subSequence(start, j).toString, in.drop(j - offset))
+      else  {
+	val found = 
+          if (endOfSource) 
+            "end of source"
+          else 
+            "`"+source.charAt(start)+"'" 
+	Failure("`"+s+"' expected but "+found+" found", in.drop(start - offset))
+      }
+    }
+  }
+  
   def repo: Parser[Any] = (
     rep(commit
         | tag
