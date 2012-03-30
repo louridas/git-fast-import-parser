@@ -14,6 +14,8 @@ object GitParser extends Parsers with App {
 
   var bytesCount = 0
 
+  var lineNum = 0
+
   def handleWhiteSpace(source: CharSequence, offset: Int): Int = {
     if ((offset > 0) && (source.charAt(offset - 1) != '\n')) {
       offset
@@ -50,7 +52,7 @@ object GitParser extends Parsers with App {
         Success(buf.toString, in.drop(j - offset))
       else {
         buf += source.charAt(j)
-        Failure("`" + s + "' expected but `" + buf + "' found",
+        Failure(lineNum + ": `" + s + "' expected but `" + buf + "' found",
           in.drop(start - offset))
       }
     }
@@ -111,7 +113,7 @@ object GitParser extends Parsers with App {
 
   def mark: Parser[Any] = "mark" ~ SP ~ markref ~ LF ^^ { s => println("mark"); s}
 
-  def markref: Parser[String] = ":" ~> idnum ^^ { s => val v = ":" + s; println("markref " + v); v}
+  def markref: Parser[String] = ":" ~> idnum ^^ { (d: Int) => ":" + d }
 
   def idnum: Parser[Int] = numRead
 
@@ -134,7 +136,7 @@ object GitParser extends Parsers with App {
 
   def SP: Parser[String] = " "
 
-  def LF: Parser[String] = "\n"
+  def LF: Parser[String] = "\n" ^^ { (s: String) => lineNum += 1; s }
 
   def LT: Parser[String] = "<"
 
@@ -157,7 +159,7 @@ object GitParser extends Parsers with App {
         i += 1
       }
       i match {
-        case 0 => Failure("integer count expected but found", in.drop(i))
+        case 0 => Failure(lineNum + ": integer count expected but found", in.drop(i))
         case _ => { Success(num, in.drop(i)) }
       }
     }
@@ -172,7 +174,9 @@ object GitParser extends Parsers with App {
       val buf = new StringBuilder
       var i = 0
       while (i < bytesCount) {
-        buf += source.charAt(offset + i)
+        val ch = source.charAt(offset + i)
+        if (ch == '\n') lineNum += 1
+        buf += ch
         i += 1
       }
       Success(buf.toString(), in.drop(bytesCount))
@@ -189,13 +193,15 @@ object GitParser extends Parsers with App {
       var i = 0
       val buf = new StringBuilder
       while (!buf.endsWith(delimiter)) {
-        buf += source.charAt(offset + i)
+        val ch = source.charAt(offset + i)
+        if (ch == '\n') lineNum += 1
+        buf += source.charAt(ch)
         i += 1
       }
       if (i >= delimiter.length)
         Success(buf.toString, in.drop(i))
       else {
-        Failure("expected delimiter found`" + buf + "'", in)
+        Failure(lineNum + ": expected delimiter but found`" + buf + "'", in)
       }
     }
   }
@@ -257,7 +263,7 @@ object GitParser extends Parsers with App {
       if (i > 0)
         Success(buf.toString, in.drop(i))
       else {
-        Failure("expected character sequence found newline", in)
+        Failure(lineNum + ": expected character sequence but found newline", in)
       }
     }
   }
@@ -277,7 +283,7 @@ object GitParser extends Parsers with App {
       if (i > 0)
         Success(buf.toString, in.drop(i))
       else {
-        Failure("expected letter sequence found `" + buf + "'", in)
+        Failure(lineNum + ": expected letter sequence but found `" + buf + "'", in)
       }
     }
   }
@@ -294,7 +300,10 @@ object GitParser extends Parsers with App {
     }
 
   println("Started parsing")
-  phrase(repo)(in)
+  phrase(repo)(in) match {
+    case s: Success[Any] => println("Success")
+    case f: Failure => println(f.msg)
+  }
   println(in.offset)
   println("Finished parsing")
   //println(parse(repo, in))
