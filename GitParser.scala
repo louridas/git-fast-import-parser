@@ -73,13 +73,14 @@ object GitParser extends Parsers with App {
   def commit: Parser[Any] = (
     "commit" ~! SP ~ ref ~ LF
       ~ opt(mark)
-      ~ opt("author" ~ opt(SP ~ name) ~ SP ~ LT ~ email ~ GT ~ SP ~ when ~ LF)
-      ~ "committer" ~ opt(SP ~ name) ~ SP ~ LT ~ email ~ GT ~ SP ~ when ~ LF
+      ~ opt("author" ~ opt(SP ~ personName) ~ SP ~ LT ~ email ~ GT ~ SP ~ when ~ LF)
+      ~ "committer" ~ opt(SP ~ personName) ~ SP ~ LT ~ email ~ GT ~ SP ~ when ~ LF
       ~ data
       ~ opt("from" ~ SP ~ committish ~ LF)
       ~ opt("merge" ~ SP ~ committish ~ LF)
       ~ opt(rep(fileModify | fileDelete | fileCopy | fileRename | fileDeleteAll
-      | noteModify)) ^^ { s => println("commit"); s}
+      | noteModify))
+      ~ opt(LF) ^^ { s => println("commit"); s}
     )
 
   def tag: Parser[Any] = (
@@ -117,11 +118,49 @@ object GitParser extends Parsers with App {
 
   def idnum: Parser[Int] = numRead
 
-  def name: Parser[String] = charSeq
+  def personName: Parser[String] = new Parser[String] {
 
-  def email: Parser[String] = charSeq
+    def apply(in: Input) = {
+      println("personName")
+      val source = in.source
+      val offset = in.offset
+      var i = 0
+      val buf = new StringBuilder
+      while (source.charAt(offset + i + 1) != '<') {
+        buf += source.charAt(offset + i)
+        i += 1
+      }
+      if (i > 0)
+        Success(buf.toString, in.drop(i))
+      else {
+        Failure(lineNum + ": expected person name but found `" + buf + "'" , in)
+      }
+    }
+  }
 
-  def when: Parser[String] = charSeq
+  def email: Parser[String] = new Parser[String] {
+
+    def apply(in: Input) = {
+      println("email")
+      val source = in.source
+      val offset = in.offset
+      var i = 0
+      val buf = new StringBuilder
+      while (source.charAt(offset + i) != '>') {
+        buf += source.charAt(offset + i)
+        i += 1
+      }
+      if (i > 0)
+        Success(buf.toString, in.drop(i))
+      else {
+        Failure(lineNum + ": expected email but found `" + buf + "'" , in)
+      }
+    }
+  }
+
+  def when: Parser[String] = charSeq ^^ { (s: String) => println("when"); s}
+
+  def name: Parser[String] = charSeq ^^ { (s: String) => println("name: " + s); s}
 
   def data: Parser[String] =
     "data" ~> SP ~> dataBody
@@ -142,7 +181,7 @@ object GitParser extends Parsers with App {
 
   def GT: Parser[String] = ">"
 
-  def count = numRead ^^ { (n: Int) => bytesCount = n; bytesCount}
+  def count = numRead ^^ { (n: Int) => bytesCount = n; println("bytesCount=" + bytesCount);bytesCount}
 
   def numRead: Parser[Int] = new Parser[Int] {
 
@@ -153,7 +192,6 @@ object GitParser extends Parsers with App {
       var i = 0
       var num = 0
       while (source.charAt(offset + i).isDigit) {
-        println(source.charAt(offset + i))
         num *= 10
         num += (source.charAt(offset + i) - '0')
         i += 1
@@ -179,7 +217,7 @@ object GitParser extends Parsers with App {
         buf += ch
         i += 1
       }
-      Success(buf.toString(), in.drop(bytesCount))
+      Success("read rawbytes", in.drop(bytesCount))
     }
   }
 
@@ -199,7 +237,7 @@ object GitParser extends Parsers with App {
         i += 1
       }
       if (i >= delimiter.length)
-        Success(buf.toString, in.drop(i))
+        Success("read delimited", in.drop(i))
       else {
         Failure(lineNum + ": expected delimiter but found`" + buf + "'", in)
       }
@@ -244,7 +282,7 @@ object GitParser extends Parsers with App {
 
   def dataref: Parser[Any] = markref | charSeq
 
-  def path: Parser[String] = charSeq
+  def path: Parser[String] = charSeq ^^ { (s: String) => println("path"); s}
 
   def any: Parser[String] = charSeq
 
@@ -301,8 +339,8 @@ object GitParser extends Parsers with App {
 
   println("Started parsing")
   phrase(repo)(in) match {
-    case s: Success[Any] => println("Success")
     case f: Failure => println(f.msg)
+    case _ => println("OK")
   }
   println(in.offset)
   println("Finished parsing")
