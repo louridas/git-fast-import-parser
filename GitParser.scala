@@ -58,17 +58,18 @@ object GitParser extends Parsers with App {
     }
   }
 
-  def repo: Parser[Any] = (
-    rep(commit
-      | tag
-      | reset
-      | blob
-      | checkpoint
-      | progress
-      | feature
-      | option
-    ) ^^ { s => println("repo"); s}
-    )
+  def repo: Parser[Any] = rep(action)
+      
+  def action: Parser[Any] = (
+    commit
+    | tag
+    | reset
+    | blob
+    | checkpoint
+    | progress
+    | feature
+    | option
+  )
 
   def commit: Parser[Any] = (
     "commit" ~! SP ~ ref ~ LF
@@ -338,12 +339,13 @@ object GitParser extends Parsers with App {
     }
 
   println("Started parsing")
-  phrase(repo)(in) match {
-    case f: Failure => println(f.msg)
-    case _ => println("OK")
+  var parsedOK = true
+  while (!in.atEnd && parsedOK) {
+    action(in) match {
+      case f: Failure => { parsedOK = false; println(f.msg) }
+      case _ => ;
+    }
   }
-  println(in.offset)
   println("Finished parsing")
-  //println(parse(repo, in))
 }
   
