@@ -6,15 +6,21 @@ import scala.collection.immutable.PagedSeq
 
 import java.io.InputStreamReader
 
-object GitParser extends Parsers with App {
+class GitParser extends Parsers {
 
   type Elem = Char
 
   var delimiter = ""
 
+  var lineNum = 0
+
   var bytesCount = 0
 
-  var lineNum = 0
+  var numCommits = 0
+
+  var numBlobs = 0
+
+  var charBuffer = new StringBuilder
 
   def handleWhiteSpace(source: CharSequence, offset: Int): Int = {
     if ((offset > 0) && (source.charAt(offset - 1) != '\n')) {
@@ -48,12 +54,11 @@ object GitParser extends Parsers with App {
         i += 1
         j += 1
       }
-      if (i == s.length)
+      if (i == s.length) {
         Success(buf.toString, in.drop(j - offset))
-      else {
+      } else {
         buf += source.charAt(j)
-        Failure(lineNum + ": `" + s + "' expected but `" + buf + "' found",
-          in.drop(start - offset))
+        Failure(lineNum + ": `" + s + "' expected but `" + buf + "' found", in.drop(start - offset))
       }
     }
   }
@@ -81,26 +86,51 @@ object GitParser extends Parsers with App {
       ~ opt("merge" ~ SP ~ committish ~ LF)
       ~ opt(rep(fileModify | fileDelete | fileCopy | fileRename | fileDeleteAll
       | noteModify))
-      ~ opt(LF) ^^ { s => println("commit"); s}
+      ~ opt(LF) ^^ {
+      case "commit" ~ _ ~ r ~ _ ~ m ~ a ~
+        "committer" ~ committerName ~ _ ~ _ ~ committerEmail ~ _ ~ _ ~ committerWhen ~ _
+        ~ d ~ f ~ mg ~ fn ~ _ => {
+        val ac = a match {
+          case t @ Some("author" ~ authorName ~ _ ~ _ ~ authorEmail ~  _ ~ _ ~ authorWhen ~ _) =>
+            Some("author %s <%s> %s".format(authorName, authorEmail, authorWhen))
+          case _ => None
+        }
+        val committerString = "committer %s <%s> %s".format(committerName, committerEmail, committerWhen)
+        val fc = f match {
+          case Some("from" ~ _ ~ c ~ _) => Some(c)
+          case None => None
+        }
+        val mgc = mg match {
+          case Some("merge" ~ _ ~ c ~ _) => Some(c)
+          case None => None
+        }
+        commitCallback(r, m, ac, committerString, d, fc, mgc, fn)
+      }
+    }
     )
 
   def tag: Parser[Any] = (
     "tag" ~! SP ~ name ~ LF
       ~ "from" ~ SP ~ committish ~ LF
       ~ "tagger" ~ opt(SP ~ name) ~ SP ~ LT ~ email ~ GT ~ SP ~ when ~ LF
-      ~ data ^^ { s => println("tag"); s }
+      ~ data
     )
 
   def reset: Parser[Any] = (
     "reset" ~! SP ~ ref ~ LF
       ~ opt("from" ~ SP ~ committish ~ LF)
-      ~ opt(LF)
+      ~ opt(LF) ^^ {
+        case "reset" ~ _ ~ r ~ _ ~ f ~ _ => {
+          f match {
+            case Some("from" ~ _ ~ c ~ _) => resetCallback(r, Some(c))
+            case None => resetCallback(r, None)
+          }
+        }
+      }
     )
 
-  def blob: Parser[String] = (
-    "blob" ~> LF
-      ~> opt(mark)
-      ~> data ^^ { (s: String) => println("blob"); s }
+  def blob: Parser[(Option[String], String)] = (
+    "blob" ~ LF ~ opt(mark) ~ data ^^ { case "blob" ~ _ ~ m ~ d => blobCallback(m, d) }
     )
 
   def feature: Parser[Any] = "feature" ~! SP ~ letterSeq ~ LF
@@ -113,7 +143,7 @@ object GitParser extends Parsers with App {
 
   def ref: Parser[String] = charSeq
 
-  def mark: Parser[Any] = "mark" ~ SP ~ markref ~ LF ^^ { s => println("mark"); s}
+  def mark: Parser[String] = "mark" ~ SP ~ markref ~ LF ^^ { case "mark" ~ _ ~ m ~ _ => m }
 
   def markref: Parser[String] = ":" ~> idnum ^^ { (d: Int) => ":" + d }
 
@@ -122,7 +152,6 @@ object GitParser extends Parsers with App {
   def personName: Parser[String] = new Parser[String] {
 
     def apply(in: Input) = {
-      println("personName")
       val source = in.source
       val offset = in.offset
       var i = 0
@@ -142,7 +171,6 @@ object GitParser extends Parsers with App {
   def email: Parser[String] = new Parser[String] {
 
     def apply(in: Input) = {
-      println("email")
       val source = in.source
       val offset = in.offset
       var i = 0
@@ -159,9 +187,9 @@ object GitParser extends Parsers with App {
     }
   }
 
-  def when: Parser[String] = charSeq ^^ { (s: String) => println("when"); s}
+  def when: Parser[String] = charSeq
 
-  def name: Parser[String] = charSeq ^^ { (s: String) => println("name: " + s); s}
+  def name: Parser[String] = charSeq
 
   def data: Parser[String] =
     "data" ~> SP ~> dataBody
@@ -182,12 +210,11 @@ object GitParser extends Parsers with App {
 
   def GT: Parser[String] = ">"
 
-  def count = numRead ^^ { (n: Int) => bytesCount = n; println("bytesCount=" + bytesCount);bytesCount}
+  def count = numRead ^^ { (n: Int) => bytesCount = n; bytesCount}
 
   def numRead: Parser[Int] = new Parser[Int] {
 
     def apply(in: Input) = {
-      println("numRead")
       val source = in.source
       val offset = in.offset
       var i = 0
@@ -207,18 +234,18 @@ object GitParser extends Parsers with App {
   def rawBytes: Parser[String] = new Parser[String] {
 
     def apply(in: Input) = {
-      println("rawBytes")
       val source = in.source
       val offset = in.offset
-      val buf = new StringBuilder
       var i = 0
+      charBuffer.clear()
+      println("*** " + bytesCount)
       while (i < bytesCount) {
         val ch = source.charAt(offset + i)
         if (ch == '\n') lineNum += 1
-        buf += ch
+        charBuffer += ch
         i += 1
       }
-      Success("read rawbytes", in.drop(bytesCount))
+      Success("rawBytes", in.drop(bytesCount))
     }
   }
 
@@ -226,21 +253,20 @@ object GitParser extends Parsers with App {
   def rawDelimited: Parser[String] = new Parser[String] {
 
     def apply(in: Input) = {
-      println("rawDelimited")
       val source = in.source
       val offset = in.offset
       var i = 0
-      val buf = new StringBuilder
-      while (!buf.endsWith(delimiter)) {
+      charBuffer.clear()
+      while (!charBuffer.endsWith(delimiter)) {
         val ch = source.charAt(offset + i)
         if (ch == '\n') lineNum += 1
-        buf += source.charAt(ch)
+        charBuffer += source.charAt(ch)
         i += 1
       }
       if (i >= delimiter.length)
-        Success("read delimited", in.drop(i))
+        Success("rawDelimited", in.drop(i))
       else {
-        Failure(lineNum + ": expected delimiter but found`" + buf + "'", in)
+        Failure(lineNum + ": expected delimiter but found`" + charBuffer + "'", in)
       }
     }
   }
@@ -249,21 +275,25 @@ object GitParser extends Parsers with App {
     (s: String) => delimiter = s; s
   }
 
-  def committish: Parser[Any] = (":" ~ mark) | charSeq
+  def committish: Parser[String] = (":" ~ mark) ^^ { case ":" ~ m => m } | charSeq
 
-  def fileModify: Parser[Any] = "M" ~ SP ~ mode ~ SP ~ fileBody
+  def fileModify: Parser[String] = "M" ~ SP ~ mode ~ SP ~ fileBody ^^ {
+    case "M" ~ _ ~ m ~ _ ~ b => "M %s %s".format(m, b)
+  }
 
-  def fileDelete: Parser[Any] = "D" ~ SP ~ path ~ LF
+  def fileDelete: Parser[String] = "D" ~> SP ~> path <~ LF  ^^ { (p: String) => "D %s".format(p) }
 
-  def fileCopy: Parser[Any] = "C" ~ SP ~ path ~ SP ~ path ~ LF
+  def fileCopy: Parser[String] = "C" ~ SP ~ path ~ SP ~ path ~ LF ^^ {
+    case "C" ~ _ ~ p1 ~ _ ~ p2 ~ _ => "C %s %s".format(p1, p2)
+  }
 
-  def fileRename: Parser[Any] = "R" ~ SP ~ path ~ SP ~ LF
+  def fileRename: Parser[String] = "R" ~> SP ~> path <~ SP <~ LF ^^ { (p: String) => "R % s".format(p) }
 
-  def fileDeleteAll: Parser[Any] = "deleteall" ~ LF
+  def fileDeleteAll: Parser[String] = "deleteall" ~ LF ^^ { case "deleteall" ~ _ => "deleteall" }
 
-  def noteModify: Parser[Any] = "N" ~ SP ~ noteModifyBody
+  def noteModify: Parser[String] = "N" ~> SP ~> noteModifyBody ^^ { (n: String) => "N %s".format(n) }
 
-  def noteModifyBody: Parser[Any] = externalDataFormat | inlineDataFormat
+  def noteModifyBody: Parser[String] = externalDataFormat | inlineDataFormat
 
   def mode: Parser[String] = (
     "100644"
@@ -274,23 +304,25 @@ object GitParser extends Parsers with App {
       | "160000"
     )
 
-  def fileBody: Parser[Any] = externalDataFormat | inlineDataFormat
+  def fileBody: Parser[String] = externalDataFormat | inlineDataFormat
 
-  def externalDataFormat: Parser[Any] = dataref ~ SP ~ path ~ LF
+  def externalDataFormat: Parser[String] = dataref ~ SP ~ path ~ LF ^^ {
+    case d ~ _ ~ p ~ _ => "%s %s".format(d, p)
+  }
 
-  def inlineDataFormat: Parser[String] =
-    "inline" <~ SP <~ path <~ LF <~ data
+  def inlineDataFormat: Parser[String] = "inline" ~ SP ~ path ~ LF ~ data ^^ {
+    case "inline" ~ _ ~ p ~ _ ~ d => "inline %s\n%d".format(p, d)
+  }
 
-  def dataref: Parser[Any] = markref | charSeq
+  def dataref: Parser[String] = markref | charSeq
 
-  def path: Parser[String] = charSeq ^^ { (s: String) => println("path"); s}
+  def path: Parser[String] = charSeq
 
   def any: Parser[String] = charSeq
 
   def charSeq: Parser[String] = new Parser[String] {
 
     def apply(in: Input) = {
-      println("charSeq")
       val source = in.source
       val offset = in.offset
       var i = 0
@@ -310,7 +342,6 @@ object GitParser extends Parsers with App {
   def letterSeq: Parser[String] = new Parser[String] {
 
     def apply(in: Input) = {
-      println("letterSeq")
       val source = in.source
       val offset = in.offset
       var i = 0
@@ -327,25 +358,64 @@ object GitParser extends Parsers with App {
     }
   }
 
-  
-  val in: Reader[Char] =
-    if (args.length > 0) {
-      val isr = scala.io.Source.fromFile(args(0))
-      StreamReader(new java.io.FileReader(args(0)))
-      //new PagedSeqReader(PagedSeq.fromSource(isr))
-    } else {
-      val isr = new InputStreamReader(System.in)
-      new PagedSeqReader(PagedSeq.fromReader(isr))
-    }
+  /*
+   Callback functions
+   */
 
-  println("Started parsing")
-  var parsedOK = true
-  while (!in.atEnd && parsedOK) {
-    action(in) match {
-      case f: Failure => { parsedOK = false; println(f.msg) }
-      case _ => ;
+  def commitCallback(ref: String, mark: Option[String], author: Option[String], committer: String,  data: String,
+                     from: Option[String],  merge: Option[String],
+                     fileNoteChanges: Option[List[String]]) = {
+    numCommits += 1
+    println("Commits: " + numCommits)
+    (ref, mark, author, committer, data, from, merge, fileNoteChanges)
+  }
+
+  def resetCallback(ref: String, committish: Option[String]): Tuple2[String, Option[String]] = {
+    (ref, committish)
+  }
+
+  def blobCallback(mark: Option[String],  data: String): Tuple2[Option[String], String] = {
+    numBlobs += 1
+    println("Blobs: " + numBlobs)
+    (mark, data)
+  }
+
+  def parseAction(in: Reader[Char]): (Reader[Char], Boolean) = {
+    val result = action(in)
+    if (result.successful) {
+      (result.next, true)
+    } else {
+      println(result.toString())
+      (result.next, false)
     }
   }
-  println("Finished parsing")
+}
+
+object GitParser {
+
+  def main(args: Array[String]) = {
+
+    var in: Reader[Char] =
+      if (args.length > 0) {
+        StreamReader(new java.io.FileReader(args(0)))
+      } else {
+        val isr = new InputStreamReader(System.in)
+        new PagedSeqReader(PagedSeq.fromReader(isr))
+      }
+
+
+    val gitParser = new GitParser()
+    println(in.offset)
+    println("Starting parsing")
+    var parsedOK = true
+    while (!in.atEnd && parsedOK) {
+      println(in.offset)
+      val result = gitParser.parseAction(in)
+      parsedOK = result._2
+      in = result._1
+      println(in.offset)
+    }
+    println("Finished parsing")
+  }
 }
   
