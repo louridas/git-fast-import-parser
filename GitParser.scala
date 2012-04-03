@@ -191,13 +191,12 @@ class GitParser extends Parsers {
 
   def name: Parser[String] = charSeq
 
-  def data: Parser[String] =
-    "data" ~> SP ~> dataBody
+  def data: Parser[String] = "data" ~ SP ~ dataBody ^^ { case "data" ~ _ ~ db => db }
 
   def dataBody: Parser[String] = exactByteCountFormat | delimitedFormat
 
   def exactByteCountFormat: Parser[String] =
-    count ~> LF ~> rawBytes <~ opt(LF)
+    count ~ LF ~ rawBytes ~ opt(LF) ^^ { case c ~ _ ~ rb ~ _ => rb }
 
   def delimitedFormat: Parser[String] =
     "<<" ~> delim ~> LF ~> rawDelimited <~ LF <~ delim <~ LF <~ opt(LF)
@@ -238,7 +237,6 @@ class GitParser extends Parsers {
       val offset = in.offset
       var i = 0
       charBuffer.clear()
-      println("*** " + bytesCount)
       while (i < bytesCount) {
         val ch = source.charAt(offset + i)
         if (ch == '\n') lineNum += 1
@@ -409,11 +407,10 @@ object GitParser {
     println("Starting parsing")
     var parsedOK = true
     while (!in.atEnd && parsedOK) {
-      println(in.offset)
       val result = gitParser.parseAction(in)
+      println(in.offset)
       parsedOK = result._2
       in = result._1
-      println(in.offset)
     }
     println("Finished parsing")
   }
