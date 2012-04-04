@@ -6,13 +6,27 @@ import scala.collection.immutable.PagedSeq
 
 import java.io.InputStreamReader
 
-class GitParser extends Parsers {
+trait GitActionsCallbacks {
+
+  def commitCallback(ref: String, mark: Option[String], author: Option[String], committer: String,  data: String,
+                     from: Option[String],  merge: Option[String],
+                     fileNoteChanges: Option[List[String]])
+
+  def resetCallback(ref: String, committish: Option[String]): Tuple2[String, Option[String]]
+
+  def blobCallback(mark: Option[String],  data: String): Tuple2[Option[String], String]
+}
+
+
+class GitParser(var gitActionCallbacks: GitActionsCallbacks = null) extends Parsers with GitActionsCallbacks {
 
   type Elem = Char
 
   var delimiter = ""
 
-  var lineNum = 0
+  var lineNum = 1
+
+  var charsRead = 0
 
   var bytesCount = 0
 
@@ -236,7 +250,7 @@ class GitParser extends Parsers {
       val source = in.source
       val offset = in.offset
       var i = 0
-      charBuffer.clear()
+      charBuffer = new StringBuilder()
       while (i < bytesCount) {
         val ch = source.charAt(offset + i)
         if (ch == '\n') lineNum += 1
@@ -254,7 +268,7 @@ class GitParser extends Parsers {
       val source = in.source
       val offset = in.offset
       var i = 0
-      charBuffer.clear()
+      charBuffer = new StringBuilder()
       while (!charBuffer.endsWith(delimiter)) {
         val ch = source.charAt(offset + i)
         if (ch == '\n') lineNum += 1
@@ -364,18 +378,29 @@ class GitParser extends Parsers {
                      from: Option[String],  merge: Option[String],
                      fileNoteChanges: Option[List[String]]) = {
     numCommits += 1
-    println("Commits: " + numCommits)
-    (ref, mark, author, committer, data, from, merge, fileNoteChanges)
+    if (gitActionCallbacks != null) {
+      gitActionCallbacks.commitCallback(ref, mark, author, committer, data, from, merge, fileNoteChanges)
+    } else {
+      (ref, mark, author, committer, data, from, merge, fileNoteChanges)
+    }
   }
 
   def resetCallback(ref: String, committish: Option[String]): Tuple2[String, Option[String]] = {
-    (ref, committish)
+
+    if (gitActionCallbacks != null) {
+      gitActionCallbacks.resetCallback(ref, committish)
+    } else {
+      (ref, committish)
+    }
   }
 
   def blobCallback(mark: Option[String],  data: String): Tuple2[Option[String], String] = {
     numBlobs += 1
-    println("Blobs: " + numBlobs)
-    (mark, data)
+    if (gitActionCallbacks != null) {
+      gitActionCallbacks.blobCallback(mark, data)
+    } else {
+      (mark, data)
+    }
   }
 
   def parseAction(in: Reader[Char]): (Reader[Char], Boolean) = {
@@ -387,6 +412,11 @@ class GitParser extends Parsers {
       (result.next, false)
     }
   }
+}
+
+class GitPagedSeqReader(seq: PagedSeq[Char], override val offset: Int) extends PagedSeqReader(seq, offset) {
+
+  def fromHere: GitPagedSeqReader = new GitPagedSeqReader(seq, offset)
 }
 
 object GitParser {
@@ -401,18 +431,24 @@ object GitParser {
         new PagedSeqReader(PagedSeq.fromReader(isr))
       }
 
-
-    val gitParser = new GitParser()
-    println(in.offset)
     println("Starting parsing")
+    val start = System.nanoTime
     var parsedOK = true
+    val heapMaxSize = Runtime.getRuntime.maxMemory
+    val gitParser = new GitParser
     while (!in.atEnd && parsedOK) {
-      val result = gitParser.parseAction(in)
-      println(in.offset)
-      parsedOK = result._2
-      in = result._1
+      gitParser.action(in) match {
+        case f: gitParser.Failure => { println(f.msg); parsedOK = false }
+        case s @ _ => in = s.next
+      }
+      if (Runtime.getRuntime.totalMemory() + 10000 > heapMaxSize) {
+        System.gc
+      }
     }
-    println("Finished parsing")
+    val end = System.nanoTime
+
+    println("Number of commits: " + gitParser.numCommits)
+    println("Finished parsing, took " + (end - start) + " nano seconds")
   }
 }
   
