@@ -423,31 +423,39 @@ object GitParser {
 
   def main(args: Array[String]) = {
 
-    var in: Reader[Char] =
-      if (args.length > 0) {
-        StreamReader(new java.io.FileReader(args(0)))
-      } else {
-        val isr = new InputStreamReader(System.in)
-        new PagedSeqReader(PagedSeq.fromReader(isr))
-      }
+    var numCommits = 0
+    var isr = new InputStreamReader(System.in)
+    var ps = PagedSeq.fromReader(isr)
+    var in: Reader[Char] = new PagedSeqReader(ps)
+//    var in: Reader[Char] =
+//      if (args.length > 0) {
+//        StreamReader(new java.io.FileReader(args(0)))
+//      } else {
+//        val isr = new InputStreamReader(System.in)
+//        new PagedSeqReader(PagedSeq.fromReader(isr))
+//      }
 
     println("Starting parsing")
     val start = System.nanoTime
     var parsedOK = true
     val heapMaxSize = Runtime.getRuntime.maxMemory
-    val gitParser = new GitParser
+    var gitParser: GitParser = new GitParser
     while (!in.atEnd && parsedOK) {
       gitParser.action(in) match {
-        case f: gitParser.Failure => { println(f.msg); parsedOK = false }
+        case f: GitParser#Failure => { println(f.msg); parsedOK = false }
         case s @ _ => in = s.next
       }
-      if (Runtime.getRuntime.totalMemory() + 10000 > heapMaxSize) {
-        System.gc
+      //println("offset is: " + in.offset)
+      if (ps.isDefinedAt(in.offset)) {
+        ps = ps.slice(in.offset)
+        in = new PagedSeqReader(ps)
       }
+      numCommits += gitParser.numCommits
+      gitParser = new GitParser
     }
     val end = System.nanoTime
 
-    println("Number of commits: " + gitParser.numCommits)
+    println("Number of commits: " + numCommits)
     println("Finished parsing, took " + (end - start) + " nano seconds")
   }
 }
